@@ -17,5 +17,4 @@ func Init() {
 	text, _ := reader.ReadString('\n')
 
 	CommandLine(strings.Split(text, "\n")[0])
-
 }
