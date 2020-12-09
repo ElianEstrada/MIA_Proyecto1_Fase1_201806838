@@ -85,7 +85,7 @@ func mkdisk(args []string) {
 		fit := strings.ToLower(mapArgs["fit"])
 		unit := strings.ToLower(mapArgs["unit"])
 
-		var path []string = strings.SplitAfter(mapArgs["path"], "/")
+		var path = strings.SplitAfter(mapArgs["path"], "/")
 
 		mapArgs["path"] = strings.Join(path[:len(path)-1], "")
 
@@ -239,12 +239,21 @@ func fdisk(args []string) {
 		return
 	}
 
-	if mapArgs["path"] != "" {
-		mapArgs[path] = fixPaths(mapArgs["path"])
+	size := mapArgs["size"]
+	unit := mapArgs["unit"]
+	typeP := mapArgs["type"]
+	fit := mapArgs["fit"]
+	deletePart := mapArgs["delete"]
+	add := mapArgs["add"]
+	name := mapArgs["name"]
+	path := mapArgs["path"]
+
+	if mapArgs["path"] != "" && name != "" {
+		path = fixPaths(path)
 
 		if fileExists(mapArgs["path"]) {
 
-			file, err := os.OpenFile(mapArgs["path"], os.O_RDWR, 0777)
+			file, err := os.OpenFile(path, os.O_RDWR, 0777)
 			defer file.Close()
 			if err != nil {
 				log.Fatal("The file could not be opened", err)
@@ -252,16 +261,72 @@ func fdisk(args []string) {
 			}
 
 			mbr := Structs.Mbr{}
-			mbrSize := int(unsafe.Sizeof(mbr))
+			mbrSize := int64(unsafe.Sizeof(mbr))
 			_, _ = file.Seek(0, 0)
 			mbr = retriveMbr(file, mbrSize, mbr)
+
+			if size != "" && deletePart == "" && add == "" {
+				//Create Partition
+
+				if flag, indexPartition := noPartitions(mbr.Mbr_partition); flag {
+					sizePartition, err := strconv.ParseInt(size, 10, 64)
+					if err != nil {
+						log.Fatal("size could not be converted to int", err)
+						return
+					}
+
+					if !validUnitPartition(unit, sizePartition, &mbr.Mbr_partition[0]) {
+						fmt.Println(unit + " unsupported value")
+						return
+					}
+
+					difference := mbr.Mbr_size - (mbrSize + mbr.Mbr_partition[0].Part_size)
+
+					if difference > 0 {
+
+						if !validFitPartition(fit, &mbr.Mbr_partition[0]) {
+							fmt.Println(fit + " unsupported value")
+							return
+						}
+
+						if !validType(typeP, &mbr.Mbr_partition[0]) {
+							fmt.Println(typeP + " unsupported value")
+							return
+						}
+
+						mbr.Mbr_partition[0].Part_status = 1
+						mbr.Mbr_partition[0].Part_start = mbrSize
+						copy(mbr.Mbr_partition[0].Part_name[:], name)
+
+						_, _ = file.Seek(0, 0)
+
+						var mbrBuffer bytes.Buffer
+						_ = binary.Write(&mbrBuffer, binary.BigEndian, &mbr)
+						_ = writeBytes(file, mbrBuffer.Bytes())
+
+					}
+
+				} else {
+					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start {
+
+					}
+				}
+
+			} else if add != "" && deletePart == "" && size == "" {
+				//Increment Size of partition
+			} else if deletePart != "" && size == "" && add == "" {
+				//Delete Partition
+			} else if size == "" && deletePart == "" && add == "" {
+				fmt.Println("at least the size argument must come")
+				return
+			}
 
 		} else {
 			fmt.Println("File or directory doesn't exist")
 			return
 		}
 	} else {
-		fmt.Println("at least the path argument must come")
+		fmt.Println("at least the path and name arguments must come")
 	}
 
 }
@@ -344,7 +409,7 @@ func rep(args []string) {
 	}
 }
 
-func retriveMbr(file *os.File, size int, mbr Structs.Mbr) Structs.Mbr {
+func retriveMbr(file *os.File, size int64, mbr Structs.Mbr) Structs.Mbr {
 	data := readBytes(file, size)
 	dataBuffer := bytes.NewBuffer(data)
 
@@ -367,7 +432,7 @@ func getArgs(args []string, flags map[string]bool) (map[string]string, int) {
 			i++
 			keyValue = strings.Split(item, "->")
 			if flags[strings.ToLower(keyValue[0])] {
-				mapArgs[strings.ToLower(keyValue[0])] = keyValue[1]
+				mapArgs[strings.ToLower(keyValue[0])] = strings.ToLower(keyValue[1])
 			} else {
 				fmt.Println("The argument" + keyValue[0] + "is not accepted")
 				return nil, 0
@@ -409,7 +474,7 @@ func writeBytes(file *os.File, bytes []byte) error {
 	return err
 }
 
-func readBytes(file *os.File, size int) []byte {
+func readBytes(file *os.File, size int64) []byte {
 	arrayBytes := make([]byte, size)
 
 	_, err := file.Read(arrayBytes)
@@ -435,6 +500,22 @@ func validUnit(unit string, sizeFile int64, mbr1 *Structs.Mbr) bool {
 	return false
 }
 
+func validUnitPartition(unit string, sizePartition int64, partition *Structs.Partition) bool {
+	if unit == "" {
+		partition.Part_size = sizePartition * 1024
+		return true
+	} else if unit == "b" {
+		partition.Part_size = sizePartition
+	} else if unit == "m" {
+		partition.Part_size = sizePartition * 1024 * 1024
+		return true
+	} else if unit == "k" {
+		partition.Part_size = sizePartition * 1024
+		return true
+	}
+	return false
+}
+
 func validFit(fit string, mbr1 *Structs.Mbr) bool {
 	if fit == "" {
 		mbr1.Disk_fit = 'f'
@@ -444,4 +525,68 @@ func validFit(fit string, mbr1 *Structs.Mbr) bool {
 		return true
 	}
 	return false
+}
+
+func validFitPartition(fit string, partition *Structs.Partition) bool {
+	if fit == "" {
+		partition.Part_fit = 'f'
+		return true
+	} else if fit == "bf" || fit == "ff" || fit == "wf" {
+		partition.Part_fit = fit[0]
+		return true
+	}
+	return false
+}
+
+func validType(typeP string, partition *Structs.Partition) bool {
+	if typeP == "" {
+		partition.Part_type = 'p'
+		return true
+	} else if typeP == "p" || typeP == "e" || typeP == "l" {
+		partition.Part_type = typeP[0]
+		return true
+	}
+
+	return false
+}
+
+func noPartitions(partitions [4]Structs.Partition) (bool, int) {
+	for i := 0; i < 4; i++ {
+		if partitions[i].Part_status != 0 {
+			return false, i
+		}
+	}
+
+	return true, -1
+}
+
+func partitionsCreated(partitions [4]Structs.Partition) int {
+	var count = 0
+	for i := 0; i < 4; i++ {
+		if partitions[i].Part_status != 0 {
+			count++
+		}
+	}
+
+	return count
+}
+
+func sortPartition(partitions [4]Structs.Partition) [4]Structs.Partition {
+
+	if partitionsCreated(partitions) == 1 {
+		return partitions
+	}
+	var aux Structs.Partition
+
+	for i := 0; i < 3; i++ {
+		for j := 1; j < 4; j++ {
+			if partitions[i].Part_status > partitions[j].Part_status {
+				aux = partitions[i]
+				partitions[i] = partitions[j]
+				partitions[j] = aux
+			}
+		}
+	}
+
+	return partitions
 }
