@@ -265,7 +265,7 @@ func fdisk(args []string) {
 			_, _ = file.Seek(0, 0)
 			mbr = retriveMbr(file, mbrSize, mbr)
 
-			sortPartition(mbr.Mbr_partition)
+			mbr.Mbr_partition = sortPartition(mbr.Mbr_partition)
 
 			if size != "" && deletePart == "" && add == "" {
 				//Create Partition
@@ -302,8 +302,42 @@ func fdisk(args []string) {
 					}
 
 				} else {
-					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start && partitionsCreated(mbr.Mbr_partition) == 1 {
+					countPartition := partitionsCreated(mbr.Mbr_partition)
+					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start && countPartition == 1 {
+						sizePartition, err := strconv.ParseInt(size, 10, 64)
+						if err != nil {
+							log.Fatal("size could not be converted to int", err)
+							return
+						}
 
+						if !validUnitPartition(unit, sizePartition, &mbr.Mbr_partition[0]) {
+							fmt.Println(unit + " unsupported value")
+							return
+						}
+
+						if !validType(typeP, &mbr.Mbr_partition[0]) {
+							fmt.Println(typeP + " unsupported value")
+							return
+						}
+
+						if mbr.Mbr_partition[0].Part_type == 'l' {
+							if mbr.Mbr_partition[indexPartition].Part_type == 'e' {
+								//create partition logic
+							} else {
+								fmt.Println("An extended partition must exist to create logical")
+								return
+							}
+						}
+
+						occupiedSpace := mbrSize + mbr.Mbr_partition[indexPartition].Part_size
+						difference := mbr.Mbr_size - (occupiedSpace + mbr.Mbr_partition[0].Part_size)
+
+						if difference > 0 {
+							createPartition(fit, name, file, &mbr, occupiedSpace)
+						} else {
+							fmt.Println("The partition size is too large")
+							return
+						}
 					}
 				}
 
@@ -663,8 +697,8 @@ func sortPartition(partitions [4]Structs.Partition) [4]Structs.Partition {
 	var aux Structs.Partition
 
 	for i := 0; i < 3; i++ {
-		for j := 1; j < 4; j++ {
-			if partitions[i].Part_size > partitions[j].Part_size {
+		for j := i + 1; j < 4; j++ {
+			if partitions[i].Part_start > partitions[j].Part_start {
 				aux = partitions[i]
 				partitions[i] = partitions[j]
 				partitions[j] = aux
