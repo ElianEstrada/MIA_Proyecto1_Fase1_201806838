@@ -6,7 +6,7 @@ import (
 	"bytes"
 	"encoding/binary"
 	"fmt"
-	"log"
+	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +15,7 @@ import (
 )
 
 var idDisk int64 = 0
+var mapMount = make(map[string]Structs.Mount)
 
 func CommandLine(command string) {
 
@@ -24,6 +25,7 @@ func CommandLine(command string) {
 	switch strings.ToLower(flagsArray[0]) {
 	case "exec":
 		fmt.Println("exec")
+		exec(flagsArray[1:])
 		break
 	case "pause":
 		reader := bufio.NewReader(os.Stdin)
@@ -50,6 +52,53 @@ func CommandLine(command string) {
 	case "exit":
 		fmt.Println("run finished")
 		os.Exit(1)
+	}
+}
+
+func exec(args []string) {
+	mapFlags := map[string]bool{
+		"path": true,
+	}
+	mapArgs, count := getArgs(args, mapFlags)
+
+	if count != 0 {
+		fmt.Println("There are more arguments than supported")
+		return
+	}
+	if len(args) == 0 {
+		fmt.Println("at least the path argument must come")
+		return
+	}
+	if mapArgs == nil {
+		return
+	}
+
+	if mapArgs["path"] != "" {
+		mapArgs["path"] = fixPaths(mapArgs["path"])
+
+		bytesRead, err := ioutil.ReadFile(mapArgs["path"])
+
+		if err != nil {
+			fmt.Println("The File doesn't exist", err)
+			return
+		}
+
+		fileContet := string(bytesRead)
+		var comandsFile = strings.Split(fileContet, "\r\n")
+
+		for _, item := range comandsFile {
+			if item == "" {
+				continue
+			} else if item[0] != '#' {
+				fmt.Println(item)
+				CommandLine(strings.TrimSpace(item))
+			} else {
+				fmt.Println(item)
+			}
+		}
+
+	} else {
+		fmt.Println("at least the path argument must come")
 	}
 }
 
@@ -101,7 +150,7 @@ func mkdisk(args []string) {
 		sizeFile, err := strconv.ParseInt(mapArgs["size"], 10, 64)
 
 		if err != nil {
-			log.Fatal("Size must be a number", err)
+			fmt.Println("Size must be a number", err)
 			return
 		}
 
@@ -118,7 +167,7 @@ func mkdisk(args []string) {
 		//Create the Directory
 		err = os.MkdirAll(mapArgs["path"], 0777)
 		if err != nil {
-			log.Fatal("Error creating path: ", err)
+			fmt.Println("Error creating path: ", err)
 			return
 		}
 
@@ -126,7 +175,7 @@ func mkdisk(args []string) {
 		file, err := os.Create(mapArgs["path"] + path[len(path)-1])
 		defer file.Close()
 		if err != nil {
-			log.Fatal("Error creating file: ", err)
+			fmt.Println("Error creating file: ", err)
 			return
 		}
 
@@ -198,7 +247,7 @@ func rmdisk(args []string) {
 			if strings.ToLower(option) == "y" {
 				err := os.Remove(mapArgs["path"])
 				if err != nil {
-					log.Fatal("The file could not be deleted", err)
+					fmt.Println("The file could not be deleted", err)
 					return
 				}
 			}
@@ -248,15 +297,15 @@ func fdisk(args []string) {
 	name := mapArgs["name"]
 	path := mapArgs["path"]
 
-	if mapArgs["path"] != "" && name != "" {
+	if path != "" && name != "" {
 		path = fixPaths(path)
 
-		if fileExists(mapArgs["path"]) {
+		if fileExists(path) {
 
 			file, err := os.OpenFile(path, os.O_RDWR, 0777)
 			defer file.Close()
 			if err != nil {
-				log.Fatal("The file could not be opened", err)
+				fmt.Println("The file could not be opened", err)
 				return
 			}
 
@@ -273,7 +322,7 @@ func fdisk(args []string) {
 				if flag, indexPartition := noPartitions(mbr.Mbr_partition); flag {
 					sizePartition, err := strconv.ParseInt(size, 10, 64)
 					if err != nil {
-						log.Fatal("size could not be converted to int", err)
+						fmt.Println("size could not be converted to int", err)
 						return
 					}
 
@@ -306,7 +355,7 @@ func fdisk(args []string) {
 					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start && countPartition == 1 {
 						sizePartition, err := strconv.ParseInt(size, 10, 64)
 						if err != nil {
-							log.Fatal("size could not be converted to int", err)
+							fmt.Println("size could not be converted to int", err)
 							return
 						}
 
@@ -379,8 +428,57 @@ func mount(args []string) {
 		return
 	}
 
-	if mapArgs["paht"] != "" && mapArgs["name"] != "" {
+	path := mapArgs["path"]
+	name := mapArgs["name"]
 
+	if path != "" && name != "" {
+
+		if fileExists(path) {
+
+			file, err := os.Open(path)
+			defer file.Close()
+			if err != nil {
+				fmt.Println("The file could not be opened", err)
+				return
+			}
+
+			mbr := Structs.Mbr{}
+			mbrSize := int64(unsafe.Sizeof(mbr))
+			_, _ = file.Seek(0, 0)
+			mbr = retriveMbr(file, mbrSize, mbr)
+
+			if searchPartition(mbr.Mbr_partition, name) {
+				mountPartition := Structs.Mount{Path: mapArgs["path"], Name: mapArgs["name"], Letter: 'a', Number: 1}
+				var flag bool = true
+				for key, value := range mapMount {
+					if value.Path != mountPartition.Path || value.Name != mountPartition.Name {
+						if key != "vd"+string(mountPartition.Letter)+strconv.Itoa(mountPartition.Number) {
+
+						} else if value.Path == mountPartition.Path {
+							mountPartition.Number++
+						} else {
+							mountPartition.Letter++
+						}
+					} else {
+						fmt.Println("The partition is already mounted")
+						flag = false
+						return
+					}
+				}
+
+				if flag {
+					mountPartition.Id = "vd" + string(mountPartition.Letter) + strconv.Itoa(mountPartition.Number)
+					mapMount[mountPartition.Id] = mountPartition
+				}
+
+			} else {
+				fmt.Println("The partition on disk doesn't exist")
+				return
+			}
+		} else {
+			fmt.Println("The disk doesn't exist")
+			return
+		}
 	} else {
 		fmt.Println("at least the path and name arguments must come")
 	}
@@ -405,7 +503,11 @@ func unmount(args []string) {
 	}
 
 	if mapArgs["id"] != "" {
-
+		if mapMount[mapArgs["id"]].Path != "" {
+			delete(mapMount, mapArgs["id"])
+		} else {
+			fmt.Println("The Id doesn't exist")
+		}
 	} else {
 		fmt.Println("at least the id argument must come")
 	}
@@ -481,7 +583,7 @@ func createExtended(file *os.File, start int64) bool {
 	err := writeBytes(file, ebrBuffer.Bytes())
 
 	if err != nil {
-		log.Fatal("Could not write the ebr ", err)
+		fmt.Println("Could not write the ebr ", err)
 		return false
 	}
 
@@ -525,7 +627,7 @@ func retriveMbr(file *os.File, size int64, mbr Structs.Mbr) Structs.Mbr {
 	err := binary.Read(dataBuffer, binary.BigEndian, &mbr)
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
 	}
 
 	return mbr
@@ -538,7 +640,7 @@ func retriveEbr(file *os.File, size int64, ebr Structs.Ebr) Structs.Ebr {
 	err := binary.Read(dataBuffer, binary.BigEndian, &ebr)
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
 	}
 
 	return ebr
@@ -591,7 +693,7 @@ func writeBytes(file *os.File, bytes []byte) error {
 	_, err := file.Write(bytes)
 
 	if err != nil {
-		log.Fatal("Error writing to file", err)
+		fmt.Println("Error writing to file", err)
 	}
 	return err
 }
@@ -602,7 +704,7 @@ func readBytes(file *os.File, size int64) []byte {
 	_, err := file.Read(arrayBytes)
 
 	if err != nil {
-		log.Fatal(err)
+		fmt.Println(err)
 	}
 
 	return arrayBytes
@@ -707,4 +809,16 @@ func sortPartition(partitions [4]Structs.Partition) [4]Structs.Partition {
 	}
 
 	return partitions
+}
+
+func searchPartition(partitions [4]Structs.Partition, name string) bool {
+	var newName = make([]byte, 16)
+	copy(newName[:], name)
+	for _, item := range partitions {
+		if string(item.Part_name[:]) == string(newName[:]) {
+			return true
+		}
+	}
+
+	return false
 }
