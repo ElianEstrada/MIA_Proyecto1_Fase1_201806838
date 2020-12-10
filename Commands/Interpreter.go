@@ -265,6 +265,8 @@ func fdisk(args []string) {
 			_, _ = file.Seek(0, 0)
 			mbr = retriveMbr(file, mbrSize, mbr)
 
+			sortPartition(mbr.Mbr_partition)
+
 			if size != "" && deletePart == "" && add == "" {
 				//Create Partition
 
@@ -280,34 +282,27 @@ func fdisk(args []string) {
 						return
 					}
 
+					if !validType(typeP, &mbr.Mbr_partition[0]) {
+						fmt.Println(typeP + " unsupported value")
+						return
+					}
+
+					if mbr.Mbr_partition[0].Part_type == 'l' {
+						fmt.Println("An extended partition must exist to create logical")
+						return
+					}
+
 					difference := mbr.Mbr_size - (mbrSize + mbr.Mbr_partition[0].Part_size)
 
 					if difference > 0 {
-
-						if !validFitPartition(fit, &mbr.Mbr_partition[0]) {
-							fmt.Println(fit + " unsupported value")
-							return
-						}
-
-						if !validType(typeP, &mbr.Mbr_partition[0]) {
-							fmt.Println(typeP + " unsupported value")
-							return
-						}
-
-						mbr.Mbr_partition[0].Part_status = 1
-						mbr.Mbr_partition[0].Part_start = mbrSize
-						copy(mbr.Mbr_partition[0].Part_name[:], name)
-
-						_, _ = file.Seek(0, 0)
-
-						var mbrBuffer bytes.Buffer
-						_ = binary.Write(&mbrBuffer, binary.BigEndian, &mbr)
-						_ = writeBytes(file, mbrBuffer.Bytes())
-
+						createPartition(fit, name, file, &mbr, mbrSize)
+					} else {
+						fmt.Println("The partition size is too large")
+						return
 					}
 
 				} else {
-					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start {
+					if mbrSize == mbr.Mbr_partition[indexPartition].Part_start && partitionsCreated(mbr.Mbr_partition) == 1 {
 
 					}
 				}
@@ -409,6 +404,86 @@ func rep(args []string) {
 	}
 }
 
+func createPartition(fit string, name string, file *os.File, mbr *Structs.Mbr, start int64) {
+	if !validFitPartition(fit, &mbr.Mbr_partition[0]) {
+		fmt.Println(fit + " unsupported value")
+		return
+	}
+
+	if mbr.Mbr_partition[0].Part_type == 'e' {
+		if flag, _ := noExtended(mbr.Mbr_partition); flag {
+			if !createExtended(file, start) {
+				return
+			}
+		} else {
+			fmt.Println("an extended partition already exists")
+			return
+		}
+	}
+
+	mbr.Mbr_partition[0].Part_status = 1
+	mbr.Mbr_partition[0].Part_start = start
+	copy(mbr.Mbr_partition[0].Part_name[:], name)
+
+	_, _ = file.Seek(0, 0)
+
+	var mbrBuffer bytes.Buffer
+	_ = binary.Write(&mbrBuffer, binary.BigEndian, mbr)
+	err := writeBytes(file, mbrBuffer.Bytes())
+
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+}
+
+func createExtended(file *os.File, start int64) bool {
+	ebr := Structs.Ebr{Part_status: 0, Part_start: start, Part_next: -1}
+
+	_, _ = file.Seek(start, 0)
+
+	var ebrBuffer bytes.Buffer
+	_ = binary.Write(&ebrBuffer, binary.BigEndian, &ebr)
+	err := writeBytes(file, ebrBuffer.Bytes())
+
+	if err != nil {
+		log.Fatal("Could not write the ebr ", err)
+		return false
+	}
+
+	return true
+}
+
+func noExtended(partitions [4]Structs.Partition) (bool, int) {
+	for i, item := range partitions {
+		if item.Part_status != 0 && item.Part_type == 'e' {
+			return false, i
+		}
+	}
+
+	return true, -1
+}
+
+func createLogic(file *os.File, start int64, mbr Structs.Mbr) bool {
+
+	if flag, index := noExtended(mbr.Mbr_partition); !flag {
+
+		start := mbr.Mbr_partition[index].Part_start
+
+		_, _ = file.Seek(start, 0)
+
+		ebr := Structs.Ebr{}
+		sizeEbr := int64(unsafe.Sizeof(ebr))
+		ebr = retriveEbr(file, sizeEbr, ebr)
+
+	} else {
+		fmt.Println("An extended partition must exist to create logical")
+		return false
+	}
+
+	return true
+}
+
 func retriveMbr(file *os.File, size int64, mbr Structs.Mbr) Structs.Mbr {
 	data := readBytes(file, size)
 	dataBuffer := bytes.NewBuffer(data)
@@ -420,6 +495,19 @@ func retriveMbr(file *os.File, size int64, mbr Structs.Mbr) Structs.Mbr {
 	}
 
 	return mbr
+}
+
+func retriveEbr(file *os.File, size int64, ebr Structs.Ebr) Structs.Ebr {
+	data := readBytes(file, size)
+	dataBuffer := bytes.NewBuffer(data)
+
+	err := binary.Read(dataBuffer, binary.BigEndian, &ebr)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return ebr
 }
 
 func getArgs(args []string, flags map[string]bool) (map[string]string, int) {
@@ -572,15 +660,11 @@ func partitionsCreated(partitions [4]Structs.Partition) int {
 }
 
 func sortPartition(partitions [4]Structs.Partition) [4]Structs.Partition {
-
-	if partitionsCreated(partitions) == 1 {
-		return partitions
-	}
 	var aux Structs.Partition
 
 	for i := 0; i < 3; i++ {
 		for j := 1; j < 4; j++ {
-			if partitions[i].Part_status > partitions[j].Part_status {
+			if partitions[i].Part_size > partitions[j].Part_size {
 				aux = partitions[i]
 				partitions[i] = partitions[j]
 				partitions[j] = aux

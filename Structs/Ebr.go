@@ -6,5 +6,5 @@ type Ebr struct {
 	Part_start  int64
 	Part_size   int64
 	Part_name   [16]byte
-	part_next   int64
+	Part_next   int64
 }
