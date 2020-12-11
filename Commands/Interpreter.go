@@ -24,7 +24,6 @@ func CommandLine(command string) {
 
 	switch strings.ToLower(flagsArray[0]) {
 	case "exec":
-		fmt.Println("exec")
 		exec(flagsArray[1:])
 		break
 	case "pause":
@@ -533,11 +532,104 @@ func rep(args []string) {
 		return
 	}
 
-	if mapArgs["id"] != "" && mapArgs["name"] != "" && mapArgs["path"] != "" {
+	path := mapArgs["path"]
+	name := mapArgs["name"]
+	id := mapArgs["id"]
+
+	if id != "" && name != "" && path != "" {
+		path = fixPaths(path)
+
+		if mapMount[id].Path != "" {
+
+			if name == "mbr" || name == "disk" {
+				file, err := os.Open(mapMount[id].Path)
+				defer file.Close()
+				if err != nil {
+					fmt.Println("Error trying to open file ", err)
+					return
+				}
+
+				mbr := Structs.Mbr{}
+				mbrSize := int64(unsafe.Sizeof(mbr))
+				_, _ = file.Seek(0, 0)
+				mbr = retriveMbr(file, mbrSize, mbr)
+
+				mbr.Mbr_partition = sortPartition(mbr.Mbr_partition)
+
+				if name == "mbr" {
+					repMbr(mbr, file)
+				} else {
+					repDisk(mbr, file)
+				}
+
+			} else {
+				fmt.Println("The name is invalid")
+			}
+
+		} else {
+			fmt.Println("The partition is not mounted")
+			return
+		}
 
 	} else {
 		fmt.Println("at least the path, name and id arguments must come")
 	}
+}
+
+func repMbr(mbr Structs.Mbr, file *os.File) {
+	name := strings.Split(file.Name(), "/")
+	report := "digraph G{\nbgcolor = \"#313638\"\nlabel = \"" + name[len(name)-1] + "\" fontcolor = \"white\"\nlabelloc=\"t\"\nnode[fontcolor = white color = \"#007acc\" fontsize = 15]\n"
+	report += "table [shape = none label = <\n<table border = \"0\" cellspacing = \"0\" style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n"
+	report += "<tr>\n<td border = \"1\" sides=\"b\"> <b> Name </b> </td>\n<td border = \"1\" sides=\"b\"> <b> Value </b> </td>\n</tr>\n"
+	report += "<tr>\n<td> <b> Mbr_Size </b> </td>\n<td> " + strconv.FormatInt(mbr.Mbr_size, 10) + " </td>\n</tr>\n" +
+		"<tr>\n<td> <b> Mbr_date_creation </b> </td>\n<td> " + string(mbr.Mbr_date_creation[:]) + " </td>\n</tr>\n" +
+		"<tr>\n<td> <b> Mbr_disk_signature </b> </td>\n<td>" + strconv.FormatInt(mbr.Mbr_disk_signature, 10) + " </td>\n</tr>\n" +
+		"<tr>\n<td> <b> Disk_fit </b> </td>\n<td>" + string(mbr.Disk_fit) + " </td>\n</tr>\n"
+
+	for _, item := range mbr.Mbr_partition {
+		if item.Part_status != 0 {
+			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(item.Part_name[:]) + " </b> </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + string(item.Part_status) + " </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_type </b> </td>\n<td> " + string(item.Part_type) + " </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_fit </b> </td>\n<td> " + string(item.Part_fit) + " </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_start </b> </td>\n<td> " + strconv.FormatInt(item.Part_start, 10) + " bytes </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_size </b> </td>\n<td> " + strconv.FormatInt(item.Part_size, 10) + " bytes </td>\n</tr>\n"
+		}
+	}
+	report += "</table>\n>]\n"
+
+	if flag, index := noExtended(mbr.Mbr_partition); !flag {
+		_, _ = file.Seek(mbr.Mbr_partition[index].Part_start, 0)
+		ebr := Structs.Ebr{}
+		ebrSize := int64(unsafe.Sizeof(ebr))
+
+		ebr = retriveEbr(file, ebrSize, ebr)
+		count := 0
+		for ebr.Part_next != -1 {
+			count++
+			report += "table" + strconv.FormatInt(int64(count), 10) + " [shape = none label = <\n<table border = \"0\" cellspacing = \"0\" style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n"
+			report += "<tr>\n<td border = \"1\" sides=\"b\"> <b> Name </b> </td>\n<td border = \"1\" sides=\"b\"> <b> Value </b> </td>\n</tr>\n"
+			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(ebr.Part_name[:]) + " </b> </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + string(ebr.Part_status) + " </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_fit </b> </td>\n<td> " + string(ebr.Part_fit) + " </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_start </b> </td>\n<td> " + strconv.FormatInt(ebr.Part_start, 10) + " bytes </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_size </b> </td>\n<td> " + strconv.FormatInt(ebr.Part_size, 10) + " bytes </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_next </b> </td>\n<td> " + strconv.FormatInt(ebr.Part_next, 10) + " </td>\n</tr>\n</table>\n>]\n"
+
+			_, _ = file.Seek(ebr.Part_start, 0)
+			ebr = retriveEbr(file, ebrSize, ebr)
+		}
+
+		report += "}"
+
+	} else {
+		report += "}"
+	}
+
+}
+
+func repDisk(mbr Structs.Mbr, file *os.File) {
+
 }
 
 func createPartition(fit string, name string, file *os.File, mbr *Structs.Mbr, start int64) {
