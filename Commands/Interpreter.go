@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -24,7 +25,7 @@ func CommandLine(command string) {
 
 	switch strings.ToLower(flagsArray[0]) {
 	case "exec":
-		exec(flagsArray[1:])
+		execF(flagsArray[1:])
 		break
 	case "pause":
 		reader := bufio.NewReader(os.Stdin)
@@ -54,7 +55,7 @@ func CommandLine(command string) {
 	}
 }
 
-func exec(args []string) {
+func execF(args []string) {
 	mapFlags := map[string]bool{
 		"path": true,
 	}
@@ -555,12 +556,39 @@ func rep(args []string) {
 				mbr = retriveMbr(file, mbrSize, mbr)
 
 				mbr.Mbr_partition = sortPartition(mbr.Mbr_partition)
-
+				var content string
 				if name == "mbr" {
-					repMbr(mbr, file)
+					content = repMbr(mbr, file)
 				} else {
-					repDisk(mbr, file)
+					content = repDisk(mbr, file)
 				}
+
+				nameFile := strings.SplitAfter(path, "/")
+				extension := strings.Split(nameFile[len(nameFile)-1], ".")
+
+				path := strings.Join(nameFile[:len(nameFile)-1], "")
+
+				err = os.MkdirAll(path, 0777)
+				if err != nil {
+					fmt.Println(err)
+					return
+				}
+
+				fileDot, err := os.Create(path + extension[0] + ".txt")
+				defer fileDot.Close()
+				if err != nil {
+					fmt.Println("The file could not be created", err)
+					return
+				}
+
+				_, err = fileDot.WriteString(content)
+				if err != nil {
+					fmt.Println("Error writing to file")
+					return
+				}
+
+				cmd := exec.Command("dot", "-T"+extension[1], path+extension[0]+".txt", "-o", path+extension[0]+"."+extension[1])
+				_, _ = cmd.Output()
 
 			} else {
 				fmt.Println("The name is invalid")
@@ -576,7 +604,7 @@ func rep(args []string) {
 	}
 }
 
-func repMbr(mbr Structs.Mbr, file *os.File) {
+func repMbr(mbr Structs.Mbr, file *os.File) string {
 	name := strings.Split(file.Name(), "/")
 	report := "digraph G{\nbgcolor = \"#313638\"\nlabel = \"" + name[len(name)-1] + "\" fontcolor = \"white\"\nlabelloc=\"t\"\nnode[fontcolor = white color = \"#007acc\" fontsize = 15]\n"
 	report += "table [shape = none label = <\n<table border = \"0\" cellspacing = \"0\" style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n"
@@ -588,8 +616,8 @@ func repMbr(mbr Structs.Mbr, file *os.File) {
 
 	for _, item := range mbr.Mbr_partition {
 		if item.Part_status != 0 {
-			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(item.Part_name[:]) + " </b> </td>\n</tr>\n" +
-				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + string(item.Part_status) + " </td>\n</tr>\n" +
+			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(item.Part_name[:remuveNull(item.Part_name[:])]) + " </b> </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + strconv.Itoa(int(item.Part_status)) + " </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_type </b> </td>\n<td> " + string(item.Part_type) + " </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_fit </b> </td>\n<td> " + string(item.Part_fit) + " </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_start </b> </td>\n<td> " + strconv.FormatInt(item.Part_start, 10) + " bytes </td>\n</tr>\n" +
@@ -609,8 +637,8 @@ func repMbr(mbr Structs.Mbr, file *os.File) {
 			count++
 			report += "table" + strconv.FormatInt(int64(count), 10) + " [shape = none label = <\n<table border = \"0\" cellspacing = \"0\" style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n"
 			report += "<tr>\n<td border = \"1\" sides=\"b\"> <b> Name </b> </td>\n<td border = \"1\" sides=\"b\"> <b> Value </b> </td>\n</tr>\n"
-			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(ebr.Part_name[:]) + " </b> </td>\n</tr>\n" +
-				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + string(ebr.Part_status) + " </td>\n</tr>\n" +
+			report += "<tr>\n<td colspan=\"2\" border=\"1\" sides=\"TB\"> <b> " + string(ebr.Part_name[:remuveNull(ebr.Part_name[:])]) + " </b> </td>\n</tr>\n" +
+				"<tr>\n<td> <b> Part_status </b> </td>\n<td> " + strconv.FormatInt(int64(ebr.Part_status), 10) + " </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_fit </b> </td>\n<td> " + string(ebr.Part_fit) + " </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_start </b> </td>\n<td> " + strconv.FormatInt(ebr.Part_start, 10) + " bytes </td>\n</tr>\n" +
 				"<tr>\n<td> <b> Part_size </b> </td>\n<td> " + strconv.FormatInt(ebr.Part_size, 10) + " bytes </td>\n</tr>\n" +
@@ -626,10 +654,43 @@ func repMbr(mbr Structs.Mbr, file *os.File) {
 		report += "}"
 	}
 
+	return report
 }
 
-func repDisk(mbr Structs.Mbr, file *os.File) {
+func repDisk(mbr Structs.Mbr, file *os.File) string {
+	mbrSize := int64(unsafe.Sizeof(mbr))
+	name := strings.Split(file.Name(), "/")
+	report := "digraph G{\nbgcolor = \"#313638\"\nlabel = \"" + name[len(name)-1] + "\" fontcolor = \"white\"\nlabelloc=\"t\"\nnode[fontcolor = white color = \"#007acc\" fontsize = 15]\n" +
+		"table [shape = none label = <\n<table border = \"3\" cellborder = \"1\" cellspacing = \"10\" style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"20\" fixedsize =\"true\">\n" +
+		"<tr>\n<td rowspan= \"2\"> MBR <br/><br/></td>\n"
 
+	for i, item := range mbr.Mbr_partition {
+		if item.Part_status != 0 {
+			if item.Part_type != 'e' {
+				if mbrSize == item.Part_start {
+					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "</td>\n"
+				} else if i > 0 && (mbr.Mbr_partition[i-1].Part_start+mbr.Mbr_partition[i-1].Part_size) == item.Part_start {
+					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "</td>\n"
+				} else {
+					if i == 0 {
+						difference := item.Part_start - mbrSize
+						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+					} else {
+						difference := item.Part_start - (mbr.Mbr_partition[i-1].Part_start + mbr.Mbr_partition[i-1].Part_size)
+						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+					}
+				}
+			} else {
+
+			}
+		}
+		if i == 3 {
+			difference := mbr.Mbr_size - (item.Part_start + item.Part_size)
+			report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+		}
+	}
+	report += "</tr>\n</table>\n>];\n}"
+	return report
 }
 
 func createPartition(fit string, name string, file *os.File, mbr *Structs.Mbr, start int64) {
@@ -913,4 +974,20 @@ func searchPartition(partitions [4]Structs.Partition, name string) bool {
 	}
 
 	return false
+}
+
+func remuveNull(param []byte) int {
+	for i, item := range param {
+		if item == 0 {
+			return i
+		}
+	}
+	return len(param)
+}
+
+func porcentage(sizeDisk int64, size int64) float64 {
+	var space float64
+	space = float64((size * 100.00) / sizeDisk)
+
+	return space
 }

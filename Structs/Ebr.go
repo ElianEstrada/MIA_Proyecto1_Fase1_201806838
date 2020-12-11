@@ -1,7 +1,7 @@
 package Structs
 
 type Ebr struct {
-	Part_status byte
+	Part_status int8
 	Part_fit    byte
 	Part_start  int64
 	Part_size   int64

@@ -1,7 +1,7 @@
 package Structs
 
 type Partition struct {
-	Part_status byte
+	Part_status int8
 	Part_type   byte
 	Part_fit    byte
 	Part_start  int64
