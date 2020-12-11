@@ -371,7 +371,8 @@ func fdisk(args []string) {
 
 						if mbr.Mbr_partition[0].Part_type == 'l' {
 							if mbr.Mbr_partition[indexPartition].Part_type == 'e' {
-								//create partition logic
+								createLogic(file, sizePartition, mbr)
+								return
 							} else {
 								fmt.Println("An extended partition must exist to create logical")
 								return
@@ -381,7 +382,7 @@ func fdisk(args []string) {
 						occupiedSpace := mbrSize + mbr.Mbr_partition[indexPartition].Part_size
 						difference := mbr.Mbr_size - (occupiedSpace + mbr.Mbr_partition[0].Part_size)
 
-						if difference > 0 {
+						if difference >= 0 {
 							createPartition(fit, name, file, &mbr, occupiedSpace)
 						} else {
 							fmt.Println("The partition size is too large")
@@ -668,16 +669,16 @@ func repDisk(mbr Structs.Mbr, file *os.File) string {
 		if item.Part_status != 0 {
 			if item.Part_type != 'e' {
 				if mbrSize == item.Part_start {
-					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "</td>\n"
+					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "%</td>\n"
 				} else if i > 0 && (mbr.Mbr_partition[i-1].Part_start+mbr.Mbr_partition[i-1].Part_size) == item.Part_start {
-					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "</td>\n"
+					report += "<td rowspan = \"2\">" + string(item.Part_name[:remuveNull(item.Part_name[:])]) + "<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, item.Part_size), 'f', 2, 64) + "%</td>\n"
 				} else {
 					if i == 0 {
 						difference := item.Part_start - mbrSize
-						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "%</td>\n"
 					} else {
 						difference := item.Part_start - (mbr.Mbr_partition[i-1].Part_start + mbr.Mbr_partition[i-1].Part_size)
-						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+						report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "%</td>\n"
 					}
 				}
 			} else {
@@ -686,7 +687,7 @@ func repDisk(mbr Structs.Mbr, file *os.File) string {
 		}
 		if i == 3 {
 			difference := mbr.Mbr_size - (item.Part_start + item.Part_size)
-			report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "</td>\n"
+			report += "<td rowspan = \"2\">Free<br/><br/>" + strconv.FormatFloat(porcentage(mbr.Mbr_size, difference), 'f', 2, 64) + "%</td>\n"
 		}
 	}
 	report += "</tr>\n</table>\n>];\n}"
@@ -753,7 +754,7 @@ func noExtended(partitions [4]Structs.Partition) (bool, int) {
 	return true, -1
 }
 
-func createLogic(file *os.File, start int64, mbr Structs.Mbr) bool {
+func createLogic(file *os.File, size int64, mbr Structs.Mbr) bool {
 
 	if flag, index := noExtended(mbr.Mbr_partition); !flag {
 
@@ -764,6 +765,30 @@ func createLogic(file *os.File, start int64, mbr Structs.Mbr) bool {
 		ebr := Structs.Ebr{}
 		sizeEbr := int64(unsafe.Sizeof(ebr))
 		ebr = retriveEbr(file, sizeEbr, ebr)
+
+		for ebr.Part_next != -1 {
+			_, _ = file.Seek(ebr.Part_next, 0)
+			ebr = retriveEbr(file, sizeEbr, ebr)
+		}
+		ebr.Part_next = start + size
+
+		difference := mbr.Mbr_partition[index].Part_size - (ebr.Part_next + sizeEbr)
+
+		if difference >= 0 {
+			_, _ = file.Seek(ebr.Part_next, 0)
+
+			var ebrBuffer bytes.Buffer
+			_ = binary.Write(&ebrBuffer, binary.BigEndian, &ebr)
+			err := writeBytes(file, ebrBuffer.Bytes())
+
+			if err != nil {
+				fmt.Println("Could not write the ebr ", err)
+				return false
+			}
+		} else {
+			fmt.Println("The partition size is too large")
+			return false
+		}
 
 	} else {
 		fmt.Println("An extended partition must exist to create logical")
