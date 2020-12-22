@@ -1,5 +1,5 @@
 package Structs
 
-type FlieBlock struct {
-	b_content [64]byte
+type FileBlock struct {
+	B_content [64]byte
 }

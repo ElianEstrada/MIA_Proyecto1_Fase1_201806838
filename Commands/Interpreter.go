@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io/ioutil"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -118,7 +117,8 @@ func execF(args []string) {
 		}
 
 		fileContet := string(bytesRead)
-		var comandsFile = strings.Split(fileContet, "\r\n")
+		//var comandsFile = strings.Split(fileContet, "\r\n")
+		var comandsFile = strings.Split(fileContet, "\n")
 
 		for _, item := range comandsFile {
 			if item == "" {
@@ -548,6 +548,7 @@ func unmount(args []string) {
 	}
 }
 
+/*
 func rep(args []string) {
 	mapFlags := map[string]bool{
 		"path": true,
@@ -727,7 +728,7 @@ func repDisk(mbr Structs.Mbr, file *os.File) string {
 	report += "</tr>\n</table>\n>];\n}"
 	return report
 }
-
+*/
 func createPartition(fit string, name string, file *os.File, mbr *Structs.Mbr, start int64) {
 	if !validFitPartition(fit, &mbr.Mbr_partition[0]) {
 		fmt.Println(fit + " unsupported value")
