@@ -16,7 +16,7 @@ import (
 )
 
 var idDisk int64 = 0
-var mapMount = make(map[string]Structs.Mount)
+var MapMount = make(map[string]Structs.Mount)
 
 func CommandLine(command string) {
 
@@ -48,6 +48,40 @@ func CommandLine(command string) {
 		break
 	case "rep":
 		rep(flagsArray[1:])
+		break
+	case "mkfs":
+		mkfs(flagsArray[1:])
+		break
+	case "login":
+		login(flagsArray[1:])
+		break
+	case "logout":
+		break
+	case "mkgrp":
+		break
+	case "mkusr":
+		break
+	case "chmod":
+		break
+	case "mkfile":
+		break
+	case "cat":
+		break
+	case "rem":
+		break
+	case "ren":
+		break
+	case "mkdir":
+		break
+	case "mv":
+		break
+	case "chown":
+		break
+	case "chgrp":
+		break
+	case "recovery":
+		break
+	case "loss":
 		break
 	case "exit":
 		fmt.Println("run finished")
@@ -451,7 +485,7 @@ func mount(args []string) {
 			if searchPartition(mbr.Mbr_partition, name) {
 				mountPartition := Structs.Mount{Path: mapArgs["path"], Name: mapArgs["name"], Letter: 'a', Number: 1}
 				var flag bool = true
-				for key, value := range mapMount {
+				for key, value := range MapMount {
 					if value.Path != mountPartition.Path || value.Name != mountPartition.Name {
 						if key != "vd"+string(mountPartition.Letter)+strconv.Itoa(mountPartition.Number) {
 
@@ -469,7 +503,7 @@ func mount(args []string) {
 
 				if flag {
 					mountPartition.Id = "vd" + string(mountPartition.Letter) + strconv.Itoa(mountPartition.Number)
-					mapMount[mountPartition.Id] = mountPartition
+					MapMount[mountPartition.Id] = mountPartition
 				}
 
 			} else {
@@ -504,8 +538,8 @@ func unmount(args []string) {
 	}
 
 	if mapArgs["id"] != "" {
-		if mapMount[mapArgs["id"]].Path != "" {
-			delete(mapMount, mapArgs["id"])
+		if MapMount[mapArgs["id"]].Path != "" {
+			delete(MapMount, mapArgs["id"])
 		} else {
 			fmt.Println("The Id doesn't exist")
 		}
@@ -541,10 +575,10 @@ func rep(args []string) {
 	if id != "" && name != "" && path != "" {
 		path = fixPaths(path)
 
-		if mapMount[id].Path != "" {
+		if MapMount[id].Path != "" {
 
 			if name == "mbr" || name == "disk" {
-				file, err := os.Open(mapMount[id].Path)
+				file, err := os.Open(MapMount[id].Path)
 				defer file.Close()
 				if err != nil {
 					fmt.Println("Error trying to open file ", err)
