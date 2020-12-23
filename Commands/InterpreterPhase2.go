@@ -13,6 +13,8 @@ import (
 	"unsafe"
 )
 
+var sesion Structs.User
+
 func mkfs(args []string) {
 
 	mapFlags := map[string]bool{
@@ -71,6 +73,9 @@ func mkfs(args []string) {
 				sizeJournaling := int64(unsafe.Sizeof(Structs.Journaling{}))
 				sizeInodes := int64(unsafe.Sizeof(Structs.InodeTable{}))
 				sizeBlocks := int64(unsafe.Sizeof(Structs.FolderBlock{}))
+				sizeBlockFile := int64(unsafe.Sizeof(Structs.FileBlock{}))
+				sizeBlockPointer := int64(unsafe.Sizeof(Structs.PointerBlock{}))
+				fmt.Println(sizeBlockFile, sizeBlockPointer)
 				sizeSuperBlock := int64(unsafe.Sizeof(superBlock))
 				n := (sizePartition - sizeSuperBlock) / (sizeJournaling + 4 + sizeInodes + 3*sizeBlocks)
 
@@ -192,8 +197,11 @@ func fastFormat(file *os.File, superBlock Structs.SuperBlock) {
 	copy(folderBlock.B_content[1].B_name[:], "..")
 	folderBlock.B_content[2] = Structs.Content{B_inode: 1}
 	copy(folderBlock.B_content[2].B_name[:], "user.txt")
+	folderBlock.B_content[3].B_inode = -1
+	folderBlock.B_typeBlock = '0'
 	fileBlock := Structs.FileBlock{}
 	copy(fileBlock.B_content[:], "1, G, root \n1, U, root, 123 \n")
+	fileBlock.B_typeBlock = '1'
 
 	_, _ = file.Seek(superBlock.S_block_start, 0)
 
@@ -255,6 +263,15 @@ func login(args []string) {
 		}
 	}
 
+}
+
+func logout() {
+	if sesion.Flag {
+		sesion.Flag = false
+		return
+	}
+
+	fmt.Println("There is no active session")
 }
 
 func rep(args []string) {
@@ -328,7 +345,7 @@ func rep(args []string) {
 					case "journaling":
 						break
 					case "block":
-						//dot = block(file, superBlock)
+						dot = block(file, superBlock)
 						break
 					case "bm_inode":
 						dot = bmInode(file, superBlock)
@@ -457,8 +474,7 @@ func inode(file *os.File, superBlock Structs.SuperBlock) string {
 	return report
 }
 
-/*
-func block (file *os.File, superBlock Structs.SuperBlock) string {
+func block(file *os.File, superBlock Structs.SuperBlock) string {
 	report := "digraph G{\nnodeSep = \"2\"\nbgcolor = \"#313638\"\nlabel = \"Blocks\" fontcolor = \"white\"\nlabelloc=\"t\"\n" +
 		"node[shape = none fontcolor = white color = \"#007acc\" fontsize = 15]\nedge[color = white]\n"
 
@@ -472,26 +488,37 @@ func block (file *os.File, superBlock Structs.SuperBlock) string {
 	for i, item := range bitmapBlocks {
 		if item != 0 {
 			_, _ = file.Seek(superBlock.S_block_start+int64(i)*superBlock.S_block_size, 0)
-			blocks = retriveBlocks(file, superBlock.S_inode_size, )
-			report += "table" + strconv.FormatInt(int64(i), 10) + " [label = <\n    <table border = \"0\" cellspacing = \"0\" " +
-				"style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n" +
-				"<tr>\n<td border = \"1\" sides = \"b\" colspan=\"2\"> Inode " + strconv.FormatInt(int64(i), 10) + " </td>\n</tr>\n" +
-				"<tr>\n<td> i_uid </td>\n<td> " + strconv.FormatInt(inodes.I_uid, 10) + " </td>\n</tr>\n" +
-				"<tr>\n<td> i_gid </td>\n<td> " + strconv.FormatInt(inodes.I_gid, 10) + " </td>\n</tr>\n" +
-				"<tr>\n<td> i_size </td>\n<td> " + strconv.FormatInt(inodes.I_size, 10) + " </td>\n</tr>\n" +
-				"<tr>\n<td> i_ctime </td>\n<td> " + string(inodes.I_ctime[:]) + " </td>\n</tr>\n"
-			for j := 0; j < 15; j++ {
-				if inodes.I_block[j] != - 1 {
-					report += "<tr>\n<td> i_block" + strconv.FormatInt(int64(j), 10) + " </td>\n<td> " + strconv.FormatInt(inodes.I_block[j], 10) + " </td>\n</tr>\n"
+			typeB := typeBlock(file, superBlock.S_block_size)
+
+			if typeB == 0 {
+				_, _ = file.Seek(superBlock.S_block_start+int64(i)*superBlock.S_block_size, 0)
+				folderBlock = retriveFolderBlock(file, superBlock.S_block_size, folderBlock)
+				report += "table" + strconv.FormatInt(int64(i), 10) + " [label = <\n    <table border = \"0\" cellspacing = \"0\" " +
+					"style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n" +
+					"<tr>\n<td border = \"1\" sides = \"b\" colspan=\"2\"> FolderBlock " + strconv.FormatInt(int64(i), 10) + " </td>\n</tr>\n"
+				for j := 0; j < 4; j++ {
+					if folderBlock.B_content[j].B_inode != -1 {
+						report += "<tr>\n<td>" + string(folderBlock.B_content[j].B_name[:remuveNull(folderBlock.B_content[j].B_name[:])]) + " </td>\n<td> " + strconv.FormatInt(int64(folderBlock.B_content[j].B_inode), 10) + " </td>\n</tr>\n"
+					}
 				}
+				report += "</table>\n>]\n"
+			} else if typeB == 1 {
+				_, _ = file.Seek(superBlock.S_block_start+int64(i)*superBlock.S_block_size, 0)
+				fileBlock = retriveFileBlock(file, superBlock.S_block_size, fileBlock)
+				report += "table" + strconv.FormatInt(int64(i), 10) + " [label = <\n    <table border = \"0\" cellspacing = \"0\" " +
+					"style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n" +
+					"<tr>\n<td border = \"1\" sides = \"b\"> FileBlock " + strconv.FormatInt(int64(i), 10) + " </td>\n</tr>\n" +
+					"<tr>\n<td>" + string(fileBlock.B_content[:remuveNull(fileBlock.B_content[:])]) + " </td>\n</tr>\n" +
+					"</table>\n>]\n"
+			} else {
+				_, _ = file.Seek(superBlock.S_block_start+int64(i)*superBlock.S_block_size, 0)
+				pointerBlock = retrivePointerBlock(file, superBlock.S_block_size, pointerBlock)
+				report += "table" + strconv.FormatInt(int64(i), 10) + " [label = <\n    <table border = \"0\" cellspacing = \"0\" " +
+					"style = \"rounded\" bgcolor=\"#1a1a1a\" cellpadding = \"7\">\n" +
+					"<tr>\n<td border = \"1\" sides = \"b\"> PointerBlock " + strconv.FormatInt(int64(i), 10) + " </td>\n</tr>\n" +
+					"<tr>\n<td>" + string(fileBlock.B_content[:remuveNull(fileBlock.B_content[:])]) + " </td>\n</tr>\n" +
+					"</table>\n>]\n"
 			}
-			if inodes.I_type == 0 {
-				report += "<tr>\n<td> i_type </td>\n<td> 0 </td>\n</tr>\n"
-			}else{
-				report += "<tr>\n<td> i_type </td>\n<td> 1 </td>\n</tr>\n"
-			}
-			report += "<tr>\n<td> i_perm </td>\n<td> " + strconv.FormatInt(inodes.I_perm, 10) + " </td>\n</tr>\n" +
-				"</table>\n>]\n"
 		}
 		if int64(i) == superBlock.S_first_ino {
 			break
@@ -500,7 +527,19 @@ func block (file *os.File, superBlock Structs.SuperBlock) string {
 	report += "}"
 	return report
 }
-*/
+
+func typeBlock(file *os.File, size int64) int {
+	folderBlock := Structs.FolderBlock{}
+	folderBlock = retriveFolderBlock(file, size, folderBlock)
+
+	if folderBlock.B_typeBlock == '0' {
+		return 0
+	} else if folderBlock.B_typeBlock == '1' {
+		return 1
+	} else {
+		return 2
+	}
+}
 
 func bmInode(file *os.File, superBlock Structs.SuperBlock) string {
 	_, _ = file.Seek(superBlock.S_bm_inode_start, 0)
@@ -574,6 +613,48 @@ func retriveBitMap(file *os.File, size int64) []byte {
 	}
 
 	return array
+}
+
+func retriveFileBlock(file *os.File, size int64, fileBlock Structs.FileBlock) Structs.FileBlock {
+
+	data := readBytes(file, size)
+	dataBuffer := bytes.NewBuffer(data)
+
+	err := binary.Read(dataBuffer, binary.BigEndian, &fileBlock)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return fileBlock
+}
+
+func retriveFolderBlock(file *os.File, size int64, folderBlock Structs.FolderBlock) Structs.FolderBlock {
+
+	data := readBytes(file, size)
+	dataBuffer := bytes.NewBuffer(data)
+
+	err := binary.Read(dataBuffer, binary.BigEndian, &folderBlock)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return folderBlock
+}
+
+func retrivePointerBlock(file *os.File, size int64, pointerBlock Structs.PointerBlock) Structs.PointerBlock {
+
+	data := readBytes(file, size)
+	dataBuffer := bytes.NewBuffer(data)
+
+	err := binary.Read(dataBuffer, binary.BigEndian, &pointerBlock)
+
+	if err != nil {
+		fmt.Println(err)
+	}
+
+	return pointerBlock
 }
 
 func retriveInodes(file *os.File, size int64, inodes Structs.InodeTable) Structs.InodeTable {

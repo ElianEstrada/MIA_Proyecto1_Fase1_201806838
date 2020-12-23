@@ -55,6 +55,7 @@ func CommandLine(command string) {
 		login(flagsArray[1:])
 		break
 	case "logout":
+		logout()
 		break
 	case "mkgrp":
 		break
